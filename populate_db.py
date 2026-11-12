@@ -1,49 +1,42 @@
-import os
 import random
 from datetime import datetime, timedelta
-from dotenv import load_dotenv
 from faker import Faker
-import psycopg2
+from db_manager import DatabaseManager  # Import your custom OOP class
 
-#loading dotenv to access environment variables
-load_dotenv()
-
-# Initializing Faker for generating realistic mock data
+# Initialize Faker
 fake = Faker()
-
-# Database Connection Parameters
-DB_CONFIG = {
-    "dbname": os.getenv("DB_NAME"),
-    "user": os.getenv("DB_USER"),
-    "password": os.getenv("DB_PASSWORD"),
-    "host": os.getenv("DB_HOST"),
-    "port": os.getenv("DB_PORT"),
-}
 
 
 def populate_database():
-  try:
-    connection = psycopg2.connect(**DB_CONFIG)
-    cursor = connection.cursor()
-    print("Successfully connected to PostgreSQL database!")
+  # Instantiate the DatabaseManager object
+  db = DatabaseManager()
 
-    # 1. Inserting Mock Users (50 users)
+  # Connect using the object's method
+  db.connect()
+
+  if not db.connection:
+    print("Stopping population due to connection failure.")
+    return
+
+  try:
+    # 1. Insert Mock Users (50 users)
     print("Generating users...")
     user_ids = []
     for _ in range(50):
       name = fake.name()
       email = fake.unique.email()
       address = fake.address().replace("\n", ", ")
-      cursor.execute(
+
+      # Use the connection's cursor directly
+      db.cursor.execute(
           "INSERT INTO users (name, email, address) VALUES (%s, %s, %s) RETURNING"
           " user_id;",
           (name, email, address),
       )
-      user_ids.append(cursor.fetchone()[0])
+      user_ids.append(db.cursor.fetchone()[0])
 
-    # 2. Inserting Mock Products (20 products)
+    # 2. Insert Mock Products (10 products)
     print("Generating products...")
-    categories = ["Electronics", "Apparel", "Home & Kitchen", "Books", "Sports"]
     product_data = [
         ("Wireless Mouse", "Electronics", 29.99, 150),
         ("Mechanical Keyboard", "Electronics", 89.99, 80),
@@ -59,55 +52,51 @@ def populate_database():
 
     product_ids = []
     for prod_name, cat, price, stock in product_data:
-      cursor.execute(
+      db.cursor.execute(
           "INSERT INTO products (product_name, category, price, stock_quantity)"
           " VALUES (%s, %s, %s, %s) RETURNING product_id;",
           (prod_name, cat, price, stock),
       )
-      product_ids.append((cursor.fetchone()[0], price))
+      product_ids.append((db.cursor.fetchone()[0], price))
 
-    # 3. Inserting Mock Orders & Order Items (Spread across the last 6 months)
+    # 3. Insert Mock Orders & Order Items
     print("Generating orders and order items...")
     statuses = ["Pending", "Shipped", "Delivered", "Cancelled"]
 
-    for _ in range(200):  # Generating 200 orders
+    for _ in range(200):
       user_id = random.choice(user_ids)
-      # Random date within the last 180 days
       order_date = datetime.now() - timedelta(days=random.randint(0, 180))
       status = random.choice(statuses)
 
-      cursor.execute(
+      db.cursor.execute(
           "INSERT INTO orders (user_id, status, order_date) VALUES (%s,"
           " %s, %s) RETURNING order_id;",
           (user_id, status, order_date),
       )
-      
-      order_id = cursor.fetchone()[0]
+      order_id = db.cursor.fetchone()[0]
 
-      # Adding 1 to 4 items per order
       num_items = random.randint(1, 4)
       chosen_products = random.sample(product_ids, num_items)
 
       for prod_id, prod_price in chosen_products:
         qty = random.randint(1, 3)
-        # item_price locks in the price at time of order
-        cursor.execute(
+        db.cursor.execute(
             "INSERT INTO order_items (order_id, product_id, quantity,"
             " item_price) VALUES (%s, %s, %s, %s);",
             (order_id, prod_id, qty, prod_price),
         )
 
-    # Commit changes to the database
-    connection.commit()
-    print("Data population completed successfully!")
+    # Commit changes through the connection managed by our class
+    db.connection.commit()
+    print("Data population completed successfully using OOP architecture!")
 
   except Exception as error:
-    print(f"Error while connecting to PostgreSQL: {error}")
+    print(f"Error during population: {error}")
+    if db.connection:
+      db.connection.rollback()
   finally:
-    if connection:
-      cursor.close()
-      connection.close()
-      print("PostgreSQL connection is closed.")
+    # Safely close down using the class method
+    db.close()
 
 
 if __name__ == "__main__":
